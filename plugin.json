@@ -1,0 +1,75 @@
+{
+  "name": "cohere-transcribe",
+  "version": "1.0.0",
+  "description": "Cohere Transcribe — fast, local 2B-parameter speech-to-text (14 languages)",
+  "author": "sapphire",
+  "icon": "🎧",
+  "priority": 50,
+  "default_enabled": false,
+  "settingsUI": null,
+  "web": true,
+  "capabilities": {
+    "tools": ["tools/transcribe.py"],
+    "routes": [
+      {
+        "method": "POST",
+        "path": "transcribe",
+        "handler": "routes/api.py:transcribe"
+      },
+      {
+        "method": "GET",
+        "path": "status",
+        "handler": "routes/api.py:status"
+      }
+    ],
+    "providers": {
+      "stt": {
+        "key": "cohere_transcribe",
+        "display_name": "Cohere Transcribe (Local)",
+        "entry": "provider.py",
+        "class_name": "CohereTranscribeProvider",
+        "is_local": true,
+        "requires_api_key": false
+      }
+    },
+    "settings": [
+      {
+        "key": "cohere_transcribe_model",
+        "type": "string",
+        "label": "Model ID",
+        "default": "CohereLabs/cohere-transcribe-03-2026",
+        "help": "HuggingFace model ID for Cohere Transcribe"
+      },
+      {
+        "key": "cohere_transcribe_device",
+        "type": "select",
+        "label": "Device",
+        "default": "auto",
+        "options": ["auto", "cuda", "cpu"],
+        "help": "Device for inference (auto will prefer CUDA if available)"
+      },
+      {
+        "key": "cohere_transcribe_dtype",
+        "type": "select",
+        "label": "Precision",
+        "default": "float16",
+        "options": ["float16", "bfloat16", "float32"],
+        "help": "Model precision — float16 uses ~4GB VRAM, float32 uses ~8GB"
+      },
+      {
+        "key": "cohere_transcribe_unload_timeout",
+        "type": "number",
+        "label": "Auto-unload (seconds)",
+        "default": 60,
+        "help": "Unload model from VRAM after this many seconds of inactivity (0 = never unload)"
+      },
+      {
+        "key": "cohere_transcribe_punctuation",
+        "type": "boolean",
+        "label": "Punctuation",
+        "default": true,
+        "help": "Include punctuation in transcriptions"
+      }
+    ]
+  }
+}
