@@ -6,10 +6,13 @@
   "icon": "🎧",
   "priority": 50,
   "default_enabled": false,
-  "settingsUI": null,
+  "settingsUI": "plugin",
   "web": true,
   "capabilities": {
     "tools": ["tools/transcribe.py"],
+    "hooks": {
+      "post_stt": "hooks/stt_corrections.py"
+    },
     "routes": [
       {
         "method": "POST",
@@ -20,6 +23,16 @@
         "method": "GET",
         "path": "status",
         "handler": "routes/api.py:status"
+      },
+      {
+        "method": "GET",
+        "path": "corrections",
+        "handler": "routes/api.py:get_corrections"
+      },
+      {
+        "method": "PUT",
+        "path": "corrections",
+        "handler": "routes/api.py:save_corrections"
       }
     ],
     "providers": {

@@ -7,7 +7,9 @@ Local speech-to-text plugin for [Sapphire](https://github.com/Wolfreaper85) usin
 - **14 Languages** — English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Greek, Chinese, Japanese, Korean, Vietnamese, Arabic
 - **Long-form audio** — automatic chunking for files over 35 seconds
 - **Multiple formats** — WAV, MP3, M4A, FLAC, OGG, AAC, OPUS, WebM
-- **Three ways to use** — chat command, REST API, or drag-and-drop web UI
+- **Drop-in STT provider** — one-click activation as Sapphire's system-wide speech-to-text engine
+- **Wake-word integration** — say the wake word and have your speech routed to the active persona
+- **One-tab control panel** — activation toggle, mic test, model status, and file transcription in Settings
 - **Lazy loading** — model only loads into memory on first transcription
 - **Auto-unload** — frees memory after 60s idle (configurable)
 - **Fully local** — runs entirely on your machine after initial model download
@@ -47,9 +49,21 @@ Local speech-to-text plugin for [Sapphire](https://github.com/Wolfreaper85) usin
    huggingface-cli login
    ```
 
-6. Enable the plugin in Sapphire settings and select "Cohere Transcribe (Local)" as your STT provider.
+6. Enable the plugin in **Plugin Manager**, then open **Settings → Cohere Transcribe** and flip the **Activate as STT Provider** toggle. No restart needed — the switch is live.
 
 ## Usage
+
+### Wake-word voice input (hands-free)
+With the plugin active and wake word enabled, say the wake word (default: "Hey Sapphire"), wait for the activation tone, then speak your message. Cohere transcribes it and the text is routed to the active persona as if you'd typed it.
+
+### Settings panel
+**Settings → Cohere Transcribe** gives you the full plugin control surface:
+- **STT Provider toggle** — activate/deactivate as the system-wide speech engine (hot-swap, no restart)
+- **Wake Word toggle** — turn voice activation on/off directly from this panel
+- **Microphone Test** — record 5 seconds in your browser and preview the transcription
+- **Model Status** — see whether the model is currently loaded in VRAM, model ID, device, and readiness
+- **Transcription Corrections** — define find/replace rules that fix common mistranscriptions (e.g. "Lexie" → "Lexi") before the text reaches the LLM. Runs as a `post_stt` hook.
+- **File Transcription** — drag-and-drop any audio file for one-off transcription (useful for voice-clone reference audio)
 
 ### Chat
 Ask Sapphire to transcribe a file:

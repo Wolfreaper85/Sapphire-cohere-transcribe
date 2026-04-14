@@ -1,11 +1,16 @@
 # routes/api.py
-# API endpoint for file transcription
+# API endpoints for file transcription and correction rules
 
+import json
 import os
 import tempfile
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_PLUGIN_DIR = Path(__file__).parent.parent
+_CORRECTIONS_FILE = _PLUGIN_DIR / "corrections.json"
 
 ALLOWED_EXTENSIONS = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.wma', '.aac', '.opus', '.webm'}
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500MB
@@ -119,3 +124,89 @@ def status(**kwargs):
         }
     except Exception as e:
         return {"available": False, "error": str(e)}
+
+
+# ── Transcription corrections (post_stt hook backing store) ──
+
+def _default_corrections():
+    return {"enabled": True, "pairs": []}
+
+
+def _read_corrections():
+    try:
+        if not _CORRECTIONS_FILE.exists():
+            return _default_corrections()
+        with _CORRECTIONS_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return _default_corrections()
+        pairs = data.get("pairs", [])
+        if not isinstance(pairs, list):
+            pairs = []
+        return {
+            "enabled": bool(data.get("enabled", True)),
+            "pairs": pairs,
+        }
+    except Exception as e:
+        logger.error(f"Failed reading corrections: {e}")
+        return _default_corrections()
+
+
+def _sanitize_pair(raw):
+    """Clamp a user-supplied correction pair into a safe shape."""
+    if not isinstance(raw, dict):
+        return None
+    src = str(raw.get("from", "")).strip()
+    dst = str(raw.get("to", ""))
+    if not src:
+        return None
+    return {
+        "from": src[:200],
+        "to": dst[:500],
+        "whole_word": bool(raw.get("whole_word", True)),
+        "case_insensitive": bool(raw.get("case_insensitive", True)),
+    }
+
+
+# GET /api/plugin/cohere-transcribe/corrections
+def get_corrections(**kwargs):
+    """Return current correction rules and on/off state."""
+    return _read_corrections()
+
+
+# PUT /api/plugin/cohere-transcribe/corrections
+async def save_corrections(**kwargs):
+    """Replace the correction rules list.
+
+    Body: {"enabled": bool, "pairs": [{"from": str, "to": str,
+                                       "whole_word": bool,
+                                       "case_insensitive": bool}, ...]}
+    """
+    body = kwargs.get("body") or {}
+    if not isinstance(body, dict):
+        return {"error": "Body must be a JSON object"}
+
+    raw_pairs = body.get("pairs", [])
+    if not isinstance(raw_pairs, list):
+        return {"error": "'pairs' must be a list"}
+
+    # Cap at 200 pairs so a buggy UI can't blow up the regex cache
+    cleaned = []
+    for raw in raw_pairs[:200]:
+        pair = _sanitize_pair(raw)
+        if pair:
+            cleaned.append(pair)
+
+    data = {
+        "enabled": bool(body.get("enabled", True)),
+        "pairs": cleaned,
+    }
+
+    try:
+        _CORRECTIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with _CORRECTIONS_FILE.open("w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        return {"status": "ok", "saved": len(cleaned), "enabled": data["enabled"]}
+    except Exception as e:
+        logger.error(f"Failed saving corrections: {e}")
+        return {"error": str(e)}
