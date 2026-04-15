@@ -11,7 +11,8 @@
   "capabilities": {
     "tools": ["tools/transcribe.py"],
     "hooks": {
-      "post_stt": "hooks/stt_corrections.py"
+      "post_stt": "hooks/stt_corrections.py",
+      "pre_chat": "hooks/chat_timeout_patch.py"
     },
     "routes": [
       {

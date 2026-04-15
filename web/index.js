@@ -146,6 +146,68 @@ registerPluginSettings({
                     </div>
                 </div>
 
+                <!-- ═══ Mic Calibration Section ═══ -->
+                <div class="ct-card">
+                    <div class="ct-card-header">
+                        <span class="ct-card-icon">\uD83C\uDF9A\uFE0F</span>
+                        <h3>Mic Calibration</h3>
+                    </div>
+                    <p class="ct-desc">
+                        Live level monitor for tuning the voice-activity detector. If the VAD never cuts off
+                        and your recordings hit the 30-second max, background noise is raising the adaptive
+                        threshold above silence. Watch the meter, set a threshold, save.
+                    </p>
+
+                    <div class="ct-mic-row">
+                        <button class="ct-btn ct-btn-primary" id="ct-cal-start">
+                            <span id="ct-cal-start-label">\u25B6\uFE0F Start Monitor</span>
+                        </button>
+                        <button class="ct-btn" id="ct-cal-auto" disabled title="Sample 3s of silence and set threshold">
+                            \uD83C\uDFAF Auto-Calibrate (3s silence)
+                        </button>
+                        <span class="ct-cal-hint" id="ct-cal-hint"></span>
+                    </div>
+
+                    <div class="ct-cal-meter-wrap">
+                        <canvas id="ct-cal-canvas" width="820" height="110"></canvas>
+                        <div class="ct-cal-legend">
+                            <span><span class="ct-cal-dot" style="background:#4ea3ff"></span>Level</span>
+                            <span><span class="ct-cal-dot" style="background:#ffcb3a"></span>Fixed floor (SILENCE_THRESHOLD)</span>
+                            <span><span class="ct-cal-dot" style="background:#ff5a5a"></span>Adaptive threshold (live)</span>
+                        </div>
+                        <div class="ct-cal-readout" id="ct-cal-readout">Monitor not running.</div>
+                    </div>
+
+                    <div class="ct-cal-grid">
+                        <label class="ct-cal-field">
+                            <span class="ct-cal-key">Silence threshold (floor)</span>
+                            <input id="ct-cal-threshold" type="number" step="0.0001" min="0" max="0.1" />
+                            <span class="ct-cal-sub">Default 0.0025 \u2014 chunks below this are silent</span>
+                        </label>
+                        <label class="ct-cal-field">
+                            <span class="ct-cal-key">Noise multiplier</span>
+                            <input id="ct-cal-multiplier" type="number" step="0.05" min="1.0" max="4.0" />
+                            <span class="ct-cal-sub">Default 1.1 \u2014 raise in noisy rooms (try 1.5\u20132.0)</span>
+                        </label>
+                        <label class="ct-cal-field">
+                            <span class="ct-cal-key">Background percentile</span>
+                            <input id="ct-cal-percentile" type="number" step="1" min="5" max="95" />
+                            <span class="ct-cal-sub">Default 32 \u2014 lower = less transient drift</span>
+                        </label>
+                        <label class="ct-cal-field">
+                            <span class="ct-cal-key">Silence duration (s)</span>
+                            <input id="ct-cal-duration" type="number" step="0.1" min="0.3" max="10" />
+                            <span class="ct-cal-sub">Default 1.0 \u2014 seconds of silence to end recording</span>
+                        </label>
+                    </div>
+
+                    <div class="ct-cal-actions">
+                        <button class="ct-btn ct-btn-primary" id="ct-cal-save">Save Calibration</button>
+                        <button class="ct-btn" id="ct-cal-reset">Reset to Defaults</button>
+                        <span class="ct-cal-save-hint" id="ct-cal-save-hint"></span>
+                    </div>
+                </div>
+
                 <!-- ═══ Model Status Section ═══ -->
                 <div class="ct-card">
                     <div class="ct-card-header">
@@ -496,6 +558,314 @@ registerPluginSettings({
             }, 1000);
         });
 
+        // ═══ Mic Calibration ═══
+        // Live level meter + threshold tuner. Mirrors the Python recorder's
+        // math: level = max(abs(int16 / 32768)) per chunk, adaptive threshold =
+        // max(SILENCE_THRESHOLD, percentile(history, BACKGROUND_PERCENTILE) *
+        // NOISE_MULTIPLIER). We replicate that in-browser so the user can see
+        // what the recorder would see.
+        const calDefaults = {
+            RECORDER_SILENCE_THRESHOLD: 0.0025,
+            RECORDER_NOISE_MULTIPLIER: 1.1,
+            RECORDER_BACKGROUND_PERCENTILE: 32,
+            RECORDER_SILENCE_DURATION: 1.0,
+            RECORDER_LEVEL_HISTORY_SIZE: 15,
+        };
+
+        const calStartBtn   = container.querySelector('#ct-cal-start');
+        const calStartLabel = container.querySelector('#ct-cal-start-label');
+        const calAutoBtn    = container.querySelector('#ct-cal-auto');
+        const calHint       = container.querySelector('#ct-cal-hint');
+        const calCanvas     = container.querySelector('#ct-cal-canvas');
+        const calReadout    = container.querySelector('#ct-cal-readout');
+        const calThreshold  = container.querySelector('#ct-cal-threshold');
+        const calMultiplier = container.querySelector('#ct-cal-multiplier');
+        const calPercentile = container.querySelector('#ct-cal-percentile');
+        const calDuration   = container.querySelector('#ct-cal-duration');
+        const calSaveBtn    = container.querySelector('#ct-cal-save');
+        const calResetBtn   = container.querySelector('#ct-cal-reset');
+        const calSaveHint   = container.querySelector('#ct-cal-save-hint');
+
+        const calCtx = calCanvas.getContext('2d');
+        const CAL_SCALE_MAX = 0.1;  // linear scale; anything >0.1 is clearly speech
+
+        let _calStream = null;
+        let _calAudioCtx = null;
+        let _calAnalyser = null;
+        let _calRaf = null;
+        let _calLevelHistory = [];
+        let _calCurrentLevel = 0;
+        let _calCurrentAdaptive = 0;
+        let _calAutoCalibrating = false;
+        let _calAutoSamples = null;
+
+        function percentile(arr, p) {
+            if (!arr.length) return 0;
+            const sorted = [...arr].sort((a, b) => a - b);
+            const idx = Math.max(0, Math.min(sorted.length - 1,
+                Math.floor((p / 100) * (sorted.length - 1))));
+            return sorted[idx];
+        }
+
+        function computeAdaptive(levelHistory) {
+            const threshold = parseFloat(calThreshold.value) || calDefaults.RECORDER_SILENCE_THRESHOLD;
+            const multiplier = parseFloat(calMultiplier.value) || calDefaults.RECORDER_NOISE_MULTIPLIER;
+            const pct = parseFloat(calPercentile.value) || calDefaults.RECORDER_BACKGROUND_PERCENTILE;
+            if (!levelHistory.length) return threshold;
+            const bg = percentile(levelHistory, pct);
+            return Math.max(threshold, bg * multiplier);
+        }
+
+        function drawMeter() {
+            const W = calCanvas.width;
+            const H = calCanvas.height;
+            calCtx.clearRect(0, 0, W, H);
+
+            // Background strip
+            calCtx.fillStyle = 'rgba(255,255,255,0.04)';
+            calCtx.fillRect(0, H - 50, W, 30);
+
+            // Scale ticks
+            calCtx.fillStyle = 'rgba(255,255,255,0.35)';
+            calCtx.font = '11px system-ui, sans-serif';
+            for (let i = 0; i <= 10; i++) {
+                const x = (i / 10) * W;
+                const tick = (CAL_SCALE_MAX * i / 10).toFixed(3);
+                calCtx.fillRect(x - 0.5, H - 14, 1, 6);
+                calCtx.fillText(tick, Math.min(W - 30, x + 2), H - 2);
+            }
+
+            // Level bar (clamped to scale max for display)
+            const disp = Math.min(_calCurrentLevel, CAL_SCALE_MAX);
+            const barW = (disp / CAL_SCALE_MAX) * W;
+            const overrun = _calCurrentLevel > CAL_SCALE_MAX;
+            const grad = calCtx.createLinearGradient(0, 0, W, 0);
+            grad.addColorStop(0, '#2d7cd1');
+            grad.addColorStop(0.5, '#4ea3ff');
+            grad.addColorStop(1, overrun ? '#ff7a3a' : '#6dd0ff');
+            calCtx.fillStyle = grad;
+            calCtx.fillRect(0, H - 50, barW, 30);
+
+            // Fixed floor line (SILENCE_THRESHOLD)
+            const fixed = parseFloat(calThreshold.value) || calDefaults.RECORDER_SILENCE_THRESHOLD;
+            const fixedX = Math.min(W, (fixed / CAL_SCALE_MAX) * W);
+            calCtx.strokeStyle = '#ffcb3a';
+            calCtx.lineWidth = 2;
+            calCtx.setLineDash([4, 3]);
+            calCtx.beginPath();
+            calCtx.moveTo(fixedX, H - 60);
+            calCtx.lineTo(fixedX, H - 10);
+            calCtx.stroke();
+            calCtx.setLineDash([]);
+
+            // Adaptive threshold line (live)
+            const adaptive = _calCurrentAdaptive;
+            const adX = Math.min(W, (adaptive / CAL_SCALE_MAX) * W);
+            calCtx.strokeStyle = '#ff5a5a';
+            calCtx.lineWidth = 2;
+            calCtx.beginPath();
+            calCtx.moveTo(adX, H - 65);
+            calCtx.lineTo(adX, H - 15);
+            calCtx.stroke();
+
+            // "Silent now?" indicator top-right
+            const isSilent = _calCurrentLevel < adaptive;
+            calCtx.fillStyle = isSilent ? '#54d16e' : '#ff7a5a';
+            calCtx.beginPath();
+            calCtx.arc(W - 14, 14, 7, 0, Math.PI * 2);
+            calCtx.fill();
+            calCtx.fillStyle = 'rgba(255,255,255,0.8)';
+            calCtx.font = '11px system-ui, sans-serif';
+            calCtx.textAlign = 'right';
+            calCtx.fillText(isSilent ? 'silent' : 'speech', W - 26, 18);
+            calCtx.textAlign = 'left';
+        }
+
+        function renderReadout() {
+            const fixed = parseFloat(calThreshold.value) || 0;
+            calReadout.innerHTML = `
+                <span>Level: <strong>${_calCurrentLevel.toFixed(4)}</strong></span>
+                <span>Adaptive: <strong>${_calCurrentAdaptive.toFixed(4)}</strong></span>
+                <span>Floor: <strong>${fixed.toFixed(4)}</strong></span>
+                <span>History: <strong>${_calLevelHistory.length}</strong></span>
+            `;
+        }
+
+        function calTick() {
+            if (!_calAnalyser) return;
+            const buf = new Float32Array(_calAnalyser.fftSize);
+            _calAnalyser.getFloatTimeDomainData(buf);
+            let peak = 0;
+            for (let i = 0; i < buf.length; i++) {
+                const a = Math.abs(buf[i]);
+                if (a > peak) peak = a;
+            }
+            _calCurrentLevel = peak;
+            _calLevelHistory.push(peak);
+            if (_calLevelHistory.length > calDefaults.RECORDER_LEVEL_HISTORY_SIZE) {
+                _calLevelHistory.shift();
+            }
+            _calCurrentAdaptive = computeAdaptive(_calLevelHistory);
+
+            if (_calAutoCalibrating && _calAutoSamples) {
+                _calAutoSamples.push(peak);
+            }
+
+            drawMeter();
+            renderReadout();
+            _calRaf = requestAnimationFrame(calTick);
+        }
+
+        async function startMonitor() {
+            if (_calStream) return;
+            calHint.textContent = 'Requesting mic\u2026';
+            try {
+                _calStream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: false,
+                        noiseSuppression: false,
+                        autoGainControl: false,
+                    }
+                });
+            } catch (e) {
+                calHint.textContent = `Mic denied: ${e.message}`;
+                return;
+            }
+            _calAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const src = _calAudioCtx.createMediaStreamSource(_calStream);
+            _calAnalyser = _calAudioCtx.createAnalyser();
+            _calAnalyser.fftSize = 1024;
+            _calAnalyser.smoothingTimeConstant = 0;
+            src.connect(_calAnalyser);
+
+            _calLevelHistory = [];
+            calStartLabel.textContent = '\u23F9\uFE0F Stop Monitor';
+            calAutoBtn.disabled = false;
+            calHint.textContent = '';
+            calTick();
+        }
+
+        function stopMonitor() {
+            if (_calRaf) { cancelAnimationFrame(_calRaf); _calRaf = null; }
+            if (_calStream) {
+                _calStream.getTracks().forEach(t => t.stop());
+                _calStream = null;
+            }
+            if (_calAudioCtx) {
+                try { _calAudioCtx.close(); } catch {}
+                _calAudioCtx = null;
+            }
+            _calAnalyser = null;
+            _calAutoCalibrating = false;
+            _calAutoSamples = null;
+            calStartLabel.textContent = '\u25B6\uFE0F Start Monitor';
+            calAutoBtn.disabled = true;
+            calReadout.textContent = 'Monitor stopped.';
+            calCtx.clearRect(0, 0, calCanvas.width, calCanvas.height);
+        }
+
+        calStartBtn.addEventListener('click', () => {
+            if (_calStream) stopMonitor();
+            else startMonitor();
+        });
+
+        calAutoBtn.addEventListener('click', async () => {
+            if (!_calStream) {
+                calHint.textContent = 'Start the monitor first.';
+                return;
+            }
+            calHint.textContent = 'Sampling 3s of silence \u2014 stay quiet\u2026';
+            calAutoBtn.disabled = true;
+            _calAutoSamples = [];
+            _calAutoCalibrating = true;
+            await new Promise(r => setTimeout(r, 3000));
+            _calAutoCalibrating = false;
+            const samples = _calAutoSamples || [];
+            _calAutoSamples = null;
+            calAutoBtn.disabled = false;
+
+            if (!samples.length) {
+                calHint.textContent = 'No samples captured. Try again.';
+                return;
+            }
+            // Take 95th percentile of silence samples * 1.3 as the new fixed floor.
+            // This gives a threshold just above room noise but below speech.
+            const p95 = percentile(samples, 95);
+            const suggested = Math.max(0.0005, p95 * 1.3);
+            calThreshold.value = suggested.toFixed(4);
+            calHint.textContent =
+                `Measured silence p95=${p95.toFixed(4)} \u2014 set floor to ${suggested.toFixed(4)}. Click Save to persist.`;
+        });
+
+        // Re-draw when user tweaks the fields manually
+        [calThreshold, calMultiplier, calPercentile].forEach(inp => {
+            inp.addEventListener('input', () => {
+                if (_calAnalyser) {
+                    _calCurrentAdaptive = computeAdaptive(_calLevelHistory);
+                    drawMeter();
+                    renderReadout();
+                }
+            });
+        });
+
+        async function loadCalibration() {
+            const keys = Object.keys(calDefaults);
+            const results = await Promise.all(keys.map(k => getSetting(k)));
+            const get = (k) => {
+                const r = results[keys.indexOf(k)];
+                return r && r.value !== undefined && r.value !== null ? r.value : calDefaults[k];
+            };
+            calThreshold.value  = Number(get('RECORDER_SILENCE_THRESHOLD')).toFixed(4);
+            calMultiplier.value = Number(get('RECORDER_NOISE_MULTIPLIER')).toFixed(2);
+            calPercentile.value = Math.round(Number(get('RECORDER_BACKGROUND_PERCENTILE')));
+            calDuration.value   = Number(get('RECORDER_SILENCE_DURATION')).toFixed(1);
+        }
+
+        calSaveBtn.addEventListener('click', async () => {
+            calSaveBtn.disabled = true;
+            calSaveHint.textContent = 'Saving\u2026';
+            calSaveHint.className = 'ct-cal-save-hint';
+            try {
+                const updates = [
+                    ['RECORDER_SILENCE_THRESHOLD', parseFloat(calThreshold.value)],
+                    ['RECORDER_NOISE_MULTIPLIER', parseFloat(calMultiplier.value)],
+                    ['RECORDER_BACKGROUND_PERCENTILE', parseFloat(calPercentile.value)],
+                    ['RECORDER_SILENCE_DURATION', parseFloat(calDuration.value)],
+                ];
+                for (const [k, v] of updates) {
+                    if (isNaN(v)) throw new Error(`Invalid value for ${k}`);
+                    await putSetting(k, v, true);
+                }
+                calSaveHint.textContent = 'Saved \u2014 settings persist across restarts.';
+                calSaveHint.className = 'ct-cal-save-hint ct-status-active';
+                setTimeout(() => { calSaveHint.textContent = ''; }, 4000);
+            } catch (e) {
+                calSaveHint.textContent = `Error: ${e.message}`;
+                calSaveHint.className = 'ct-cal-save-hint ct-status-error';
+            } finally {
+                calSaveBtn.disabled = false;
+            }
+        });
+
+        calResetBtn.addEventListener('click', () => {
+            calThreshold.value  = calDefaults.RECORDER_SILENCE_THRESHOLD.toFixed(4);
+            calMultiplier.value = calDefaults.RECORDER_NOISE_MULTIPLIER.toFixed(2);
+            calPercentile.value = String(calDefaults.RECORDER_BACKGROUND_PERCENTILE);
+            calDuration.value   = calDefaults.RECORDER_SILENCE_DURATION.toFixed(1);
+            calSaveHint.textContent = 'Defaults loaded \u2014 click Save to apply.';
+            calSaveHint.className = 'ct-cal-save-hint';
+            if (_calAnalyser) {
+                _calCurrentAdaptive = computeAdaptive(_calLevelHistory);
+                drawMeter();
+                renderReadout();
+            }
+        });
+
+        // Stop monitor on tab visibility change to release the mic
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && _calStream) stopMonitor();
+        });
+
         // ═══ File drop / transcribe ═══
         function showFileStatus(msg, kind) {
             fileStatus.style.display = 'block';
@@ -692,6 +1062,7 @@ registerPluginSettings({
             refreshWakeState(),
             refreshModelStatus(),
             loadCorrections(),
+            loadCalibration(),
         ]);
     },
 

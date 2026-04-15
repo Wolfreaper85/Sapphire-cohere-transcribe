@@ -501,3 +501,114 @@
     opacity: 0.7;
     margin-left: auto;
 }
+
+/* ── Mic Calibration card ── */
+.ct-cal-hint {
+    font-size: 0.85em;
+    opacity: 0.75;
+    margin-left: 4px;
+    align-self: center;
+}
+
+.ct-cal-meter-wrap {
+    margin: 14px 0 16px;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.08));
+    border-radius: 8px;
+    padding: 10px 12px 12px;
+}
+
+#ct-cal-canvas {
+    display: block;
+    width: 100%;
+    max-width: 820px;
+    height: 110px;
+    background: rgba(0, 0, 0, 0.35);
+    border-radius: 6px;
+}
+
+.ct-cal-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 8px;
+    font-size: 0.82em;
+    opacity: 0.75;
+}
+
+.ct-cal-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+
+.ct-cal-readout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    margin-top: 8px;
+    font-size: 0.85em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    opacity: 0.85;
+}
+
+.ct-cal-readout strong {
+    color: var(--accent-color, #4ea3ff);
+    font-weight: 600;
+}
+
+.ct-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px 16px;
+    margin: 14px 0 12px;
+}
+
+.ct-cal-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.ct-cal-key {
+    font-size: 0.85em;
+    font-weight: 600;
+    opacity: 0.85;
+}
+
+.ct-cal-field input[type="number"] {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+    color: var(--text-color, #e0e0e0);
+    padding: 6px 8px;
+    border-radius: 6px;
+    font-size: 0.95em;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.ct-cal-field input[type="number"]:focus {
+    outline: none;
+    border-color: var(--accent-color, #4ea3ff);
+    box-shadow: 0 0 0 2px rgba(78, 163, 255, 0.15);
+}
+
+.ct-cal-sub {
+    font-size: 0.75em;
+    opacity: 0.55;
+}
+
+.ct-cal-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.ct-cal-save-hint {
+    font-size: 0.85em;
+    opacity: 0.8;
+    margin-left: auto;
+}
