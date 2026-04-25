@@ -2,6 +2,25 @@
 
 Local speech-to-text plugin for [Sapphire](https://github.com/Wolfreaper85) using Cohere's 2B-parameter Transcribe model. 14 languages, long-form audio, WAV/MP3/M4A/FLAC support. Transcribe via chat, API, or drag-and-drop UI. Lazy-loads on first use, auto-unloads when idle. Fully local, no cloud API. Apache 2.0.
 
+## ⚠️ Compatibility Warning — Conflicts with Qwen3-TTS
+
+This plugin requires **transformers >= 5.4.0** for the `CohereAsrForConditionalGeneration` class.
+
+If you also use the [Sapphire-Qwen3-TTS plugin](https://github.com/Wolfreaper85/Sapphire-Qwen3-TTS) (or its GitLab mirror at https://gitlab.com/Wolfreaper85/Sapphire-Qwen3-TTS), be aware: Qwen3-TTS pins **transformers == 4.57.3** (forced by the `qwen-tts` upstream dependency's exact pin).
+
+**You cannot run both plugins at the same time** until the upstream dependency conflict is resolved. Whichever transformers version is installed determines which plugin works:
+
+| transformers version | Cohere Transcribe | Qwen3-TTS |
+|---|---|---|
+| `4.57.3` (pinned by qwen-tts) | won't load | works |
+| `>= 5.4.0` (this plugin needs) | works | crashes on startup |
+
+Symptoms if you upgrade transformers to 5.x while Qwen3-TTS is installed: Qwen3-TTS crashes with `check_model_inputs()` or similar errors, all saved voice clones become unplayable, system falls back to Kokoro voices.
+
+If you want to keep your Qwen3-TTS voices, alternatives for STT include:
+- **[Sapphire-Parakeet-STT](https://github.com/Wolfreaper85/Sapphire-Parakeet-STT)** — NeMo-based, 4.85% WER on LibriSpeech, no transformers conflict
+- **Faster-Whisper** — Sapphire's bundled fallback STT, no extra install required
+
 ## Features
 
 - **14 Languages** — English, French, German, Spanish, Portuguese, Italian, Dutch, Polish, Greek, Chinese, Japanese, Korean, Vietnamese, Arabic
